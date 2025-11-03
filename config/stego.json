@@ -1,0 +1,31 @@
+{
+  "common": {
+    "block_size": "auto",
+    "force_k": 4,
+    "base_seed": 1234,
+    "systematic": false,
+    "target_k": 200,
+    "headroom": 0.98
+  },
+  "stego_until": {
+    "message": "F:\\python\\paper\\data\\samples\\msg.txt",
+    "cover":   "F:\\python\\paper\\data\\samples\\8959dd9db11d4750b9c9d2a9ae70f716.png",
+    "n": 200,
+    "loss": 0.5,
+    "frames_dir": "F:\\python\\paper\\runs\\frames_until",
+    "out": "F:\\python\\paper\\runs\\lt_recovered.bin",
+    "preview": true,
+    "systematic": false
+  },
+  "stego_interval": {
+    "message": "F:\\python\\paper\\data\\samples\\msg.txt",
+    "cover":   "F:\\python\\paper\\data\\samples\\8959dd9db11d4750b9c9d2a9ae70f716.png",
+    "n": 200,
+    "frames_dir": "F:\\python\\paper\\runs\\frames_interval",
+    "keep": "",
+    "show_full": false,
+    "out": "F:\\python\\paper\\runs\\interval_recovered.bin",
+    "preview": true,
+    "systematic": false
+  }
+}
