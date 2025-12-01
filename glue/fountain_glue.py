@@ -9,7 +9,7 @@ from typing import Optional
 import struct
 import numpy as np
 
-from fountain.lt_min import LTPacket  # 关键：从包名导入
+from fountain.old import LTPacket  # 关键：从包名导入
 
 MAGIC = 0xA5  # 8 bits
 VERSION = 0x1  # 4 bits

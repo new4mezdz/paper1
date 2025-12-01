@@ -107,16 +107,19 @@ def extract_frames(video_path: str, output_dir: str, mode: str = "i") -> None:
 
                 pts = frame.pts if frame.pts is not None else 0
 
+                # ==========================================
+                # 修改点：后缀名改为 .png 以保证无损
+                # ==========================================
                 if label == PICT_I:
                     out_dir = out_I
-                    fname = os.path.join(out_dir, f"I_pts_{pts}.jpg")
-                    img.save(fname)
+                    fname = os.path.join(out_dir, f"I_pts_{pts}.png") # <--- 改为 .png
+                    img.save(fname, "PNG")
                     saved_I += 1
                     print(f"保存 I 帧: pts={pts}, t={ts} -> {fname}")
                 elif label == PICT_P:
                     out_dir = out_P
-                    fname = os.path.join(out_dir, f"P_pts_{pts}.jpg")
-                    img.save(fname)
+                    fname = os.path.join(out_dir, f"P_pts_{pts}.png") # <--- 改为 .png
+                    img.save(fname, "PNG")
                     saved_P += 1
                     print(f"保存 P 帧: pts={pts}, t={ts} -> {fname}")
 

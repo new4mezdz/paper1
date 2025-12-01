@@ -15,7 +15,7 @@ import numpy as np
 import pickle
 import zlib
 
-from fountain.lt_min import LTDecoder, LTPacket
+from fountain.old import LTDecoder, LTPacket
 
 # 协议常量（必须与嵌入端一致）
 MAGIC = b'LTPK'

@@ -16,7 +16,7 @@ import pickle
 import zlib
 from PIL import Image
 
-from fountain.lt_min import LTEncoder, LTPacket
+from fountain.old import LTEncoder, LTPacket
 from fountain.auto_blocksize import resolve_block_size
 
 # 协议常量

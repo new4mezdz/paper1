@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import argparse
 import cv2
 import numpy as np
-from fountain.lt_min import LTEncoder, LTPacket
+from fountain.old import LTEncoder, LTPacket
 from fountain.auto_blocksize import resolve_block_size
 from stego.stego_lsb import embed_bits_lsb, compute_capacity
 import pickle
