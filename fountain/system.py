@@ -17,7 +17,7 @@ import qimtest
 
 # =================配置区域=================
 INPUT_FOLDER = r"D:\paper data\output_3\10"  # 输入图片文件夹
-OUTPUT_FOLDER = r"D:\paper data\stego_output"  # 输出 stego 图片
+OUTPUT_FOLDER = r"D:\paper data\changeI"  # 输出 stego 图片
 
 PAYLOAD_SIZE = 31  # 包大小（心跳包和数据包统一）
 BLOCK_SIZE_FOR_LT = 23  # LT 编码 payload
@@ -400,8 +400,9 @@ def main_extract():
     print("=" * 60)
 
     # 获取所有 stego 图片
-    stego_files = glob(os.path.join(OUTPUT_FOLDER, "stego_*.png"))
-    stego_files += glob(os.path.join(OUTPUT_FOLDER, "stego_*.jpg"))
+    stego_files = glob(os.path.join(OUTPUT_FOLDER, "*.png"))
+    stego_files += glob(os.path.join(OUTPUT_FOLDER, "*.jpg"))
+    stego_files += glob(os.path.join(OUTPUT_FOLDER, "*.jpeg"))
     stego_files = sorted(stego_files)
 
     if not stego_files:
