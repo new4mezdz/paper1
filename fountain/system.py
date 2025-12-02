@@ -17,7 +17,7 @@ import qimtest
 
 # =================配置区域=================
 INPUT_FOLDER = r"D:\paper data\output_3\10"  # 输入图片文件夹
-OUTPUT_FOLDER = r"D:\paper data\changeI"  # 输出 stego 图片
+OUTPUT_FOLDER = r"F:\python\paper1\tools\extracted_i_only\I"  # 输出 stego 图片
 
 PAYLOAD_SIZE = 31  # 包大小（心跳包和数据包统一）
 BLOCK_SIZE_FOR_LT = 23  # LT 编码 payload

@@ -11,7 +11,7 @@ from typing import Tuple
 依赖：PyAV（pip install av）
 示例：
   python extract_i_p_frames.py --video "D:/paper/data/samples/1.mp4" --out extracted_frames --mode ip
-  python extract_i_p_frames.py --video "D:/paper data/watermarked_video_lossless.mp4" --out extracted_i_only --mode i
+  python extract_i_p_frames.py --video "F:\python\paper data/watermarked_video_lossless.mp4" --out extracted_i_only --mode i
 """
 
 PICT_I = "I"
