@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-喷泉码水印系统 - 完整版 (含 JPEG 攻击测试)
+喷泉码水印系统 - 完整版 (含几何攻击测试)
 - 心跳包机制（不需要预知 k）
 - 批量嵌入文件夹下所有图片
 - 手动选择图片进行提取
-- [新增] 提取前可选 JPEG 压缩攻击
+- [新增] 提取前可选多种攻击（JPEG、平移、缩放、裁剪、旋转）
+- [修复] 使用灰度图处理，避免YCrCb转换误差
 """
 import cv2
 import numpy as np
@@ -17,7 +18,7 @@ import qimtest
 
 # =================配置区域=================
 INPUT_FOLDER = r"D:\paper data\output_3\10"  # 输入图片文件夹
-OUTPUT_FOLDER = r"F:\python\paper1\tools\extracted_i_only\I"  # 输出 stego 图片
+OUTPUT_FOLDER = r"D:\paper1\fountain\extracted_i_only\I"  # 输出 stego 图片
 
 PAYLOAD_SIZE = 31  # 包大小（心跳包和数据包统一）
 BLOCK_SIZE_FOR_LT = 23  # LT 编码 payload
@@ -25,7 +26,7 @@ PATCH_SIZE = 128  # 补丁大小
 QIM_STEP = 200  # QIM 步长
 
 PACKETS_PER_IMG = 15  # 每张图嵌入的包数量（含1个心跳包 + 14个数据包）
-SEARCH_RANGE = 50  # 提取时搜索的特征点数量
+SEARCH_RANGE = 300  # 提取时搜索的特征点数量
 BASE_SEED = 2025  # 随机种子
 
 # 心跳包 magic header
@@ -33,7 +34,7 @@ HEARTBEAT_MAGIC = 0xDEADBEEF
 
 
 # ==========================================
-# 攻击工具 (新增)
+# 攻击工具
 # ==========================================
 def attack_jpeg(img, quality):
     """
@@ -44,7 +45,62 @@ def attack_jpeg(img, quality):
     """
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
     _, encimg = cv2.imencode('.jpg', img, encode_param)
-    return cv2.imdecode(encimg, 0) # 强制返回灰度图
+    return cv2.imdecode(encimg, 0)  # 强制返回灰度图
+
+
+def attack_translate(img, tx, ty):
+    """
+    平移攻击
+    tx, ty: 平移像素数（可为负）
+    """
+    h, w = img.shape[:2]
+    M = np.float32([[1, 0, tx], [0, 1, ty]])
+    return cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+
+def attack_scale(img, scale_factor):
+    """
+    缩放攻击
+    scale_factor: 缩放比例（如 0.8 缩小, 1.2 放大）
+    """
+    h, w = img.shape[:2]
+    new_w, new_h = int(w * scale_factor), int(h * scale_factor)
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    # 再缩放回原尺寸
+    return cv2.resize(resized, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def attack_crop(img, crop_ratio):
+    """
+    裁剪攻击（中心裁剪后放大回原尺寸）
+    crop_ratio: 保留比例（如 0.9 表示裁剪掉 10%）
+    """
+    h, w = img.shape[:2]
+    ch, cw = int(h * crop_ratio), int(w * crop_ratio)
+    y1, x1 = (h - ch) // 2, (w - cw) // 2
+    cropped = img[y1:y1 + ch, x1:x1 + cw]
+    return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def attack_rotate(img, angle):
+    """
+    旋转攻击（保留完整图片，扩大画布）
+    """
+    h, w = img.shape[:2]
+    center = (w / 2, h / 2)
+
+    # 计算旋转后需要的新尺寸
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    cos = np.abs(M[0, 0])
+    sin = np.abs(M[0, 1])
+    new_w = int(h * sin + w * cos)
+    new_h = int(h * cos + w * sin)
+
+    # 调整平移，让图片居中
+    M[0, 2] += (new_w - w) / 2
+    M[1, 2] += (new_h - h) / 2
+
+    return cv2.warpAffine(img, M, (new_w, new_h), borderValue=(0, 0, 0))
 
 
 # ==========================================
@@ -103,12 +159,13 @@ def parse_heartbeat_packet(data):
 # 基础函数
 # ==========================================
 def get_patch_transform(kp, output_size):
-    """只平移，不旋转不缩放 (您提供的版本逻辑)"""
+    """量化角度，提高鲁棒性"""
     x, y = kp.pt
-    M = np.float32([
-        [1, 0, output_size / 2 - x],
-        [0, 1, output_size / 2 - y]
-    ])
+    angle = kp.angle
+
+    M = cv2.getRotationMatrix2D((x, y), -angle, 1.0)
+    M[0, 2] += (output_size / 2) - x
+    M[1, 2] += (output_size / 2) - y
     return M
 
 
@@ -177,12 +234,29 @@ def filter_keypoints_by_boundary(kps_all, img_shape):
     return kp_filtered
 
 
+def filter_keypoints_by_distance(kps, min_dist=PATCH_SIZE):
+    """过滤掉距离太近的点"""
+    selected = []
+    for kp in kps:
+        x, y = kp.pt
+        too_close = False
+        for sel in selected:
+            sx, sy = sel.pt
+            if np.sqrt((x - sx) ** 2 + (y - sy) ** 2) < min_dist:
+                too_close = True
+                break
+        if not too_close:
+            selected.append(kp)
+    return selected
+
+
 def filter_stable_keypoints(img_gray, candidates):
-    """数据完整性过滤：只保留能正确提取数据的点"""
+    """数据完整性过滤：只保留嵌入后仍能被SIFT找到且能正确提取数据的点"""
     h, w = img_gray.shape
     dummy_data = b'\xAA' * PAYLOAD_SIZE
 
     survivors = []
+    sift = cv2.SIFT_create()
 
     for kp in candidates:
         try:
@@ -198,6 +272,21 @@ def filter_stable_keypoints(img_gray, candidates):
             region = (mask_warped > 10)
             temp_img[region] = patch_back[region]
 
+            # 新增：检查嵌入后SIFT是否还能找到这个点（位置和角度都要接近）
+            kps_after = sift.detect(temp_img, None)
+            found = False
+            for new_kp in kps_after:
+                dist = np.sqrt((kp.pt[0] - new_kp.pt[0]) ** 2 + (kp.pt[1] - new_kp.pt[1]) ** 2)
+                angle_diff = abs(kp.angle - new_kp.angle)
+                angle_diff = min(angle_diff, 360 - angle_diff)
+                if dist < 3 and angle_diff < 5:
+                    found = True
+                    break
+
+            if not found:
+                continue
+
+            # 用新检测到的点来提取验证
             patch_verify = cv2.warpAffine(temp_img, M, (PATCH_SIZE, PATCH_SIZE), flags=cv2.INTER_NEAREST)
             extracted = extract_packet_from_patch(patch_verify)
 
@@ -206,33 +295,32 @@ def filter_stable_keypoints(img_gray, candidates):
         except:
             continue
 
-    return survivors
 
+    return survivors
 
 def embed_into_image(img_bgr, packets):
     """
-    将多个包嵌入到单张图片（保留彩色）
+    将多个包嵌入到单张图片（灰度处理）
     packets: 包列表（第一个应该是心跳包）
-    返回: stego 彩色图片, 实际嵌入的包数
+    返回: stego 灰度图片, 实际嵌入的包数
     """
-    # 转换到 YCrCb，只处理 Y 通道
-    img_ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-    img_y = img_ycrcb[:, :, 0]  # Y 通道
-
-    h, w = img_y.shape
+    # 直接转灰度，不用 YCrCb
+    img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = img_gray.shape
 
     # 检测特征点
     sift = cv2.SIFT_create()
-    kps_all = sift.detect(img_y, None)
+    kps_all = sift.detect(img_gray, None)
 
     # 边界过滤
-    kps_boundary = filter_keypoints_by_boundary(kps_all, img_y.shape)
+    kps_boundary = filter_keypoints_by_boundary(kps_all, img_gray.shape)
 
-    # 按响应排序
-    candidates = sorted(kps_boundary, key=lambda x: -x.response)[:100]
+    # 按响应排序 + 距离过滤
+    candidates = sorted(kps_boundary, key=lambda x: -x.response)
+    candidates = filter_keypoints_by_distance(candidates)[:100]
 
     # 数据完整性过滤
-    stable_kps = filter_stable_keypoints(img_y, candidates)
+    stable_kps = filter_stable_keypoints(img_gray, candidates)
 
     # 选择最终使用的点
     target_kps = stable_kps[:len(packets)]
@@ -241,7 +329,7 @@ def embed_into_image(img_bgr, packets):
         print(f"    ⚠️ 只有 {len(target_kps)} 个稳定点，需要 {len(packets)} 个")
 
     # 嵌入
-    current_stego = img_y.copy()
+    current_stego = img_gray.copy()
     embedded_count = 0
 
     for idx, kp in enumerate(target_kps):
@@ -260,21 +348,37 @@ def embed_into_image(img_bgr, packets):
         region = (mask_warped > 10)
         current_stego[region] = patch_back[region]
         embedded_count += 1
+    print(f"    [调试] 稳定点: {len(stable_kps)}, 实际嵌入: {embedded_count}")
 
-    # 把处理后的 Y 通道放回去
-    img_ycrcb[:, :, 0] = current_stego
-    stego_bgr = cv2.cvtColor(img_ycrcb, cv2.COLOR_YCrCb2BGR)
+    # 嵌入后立即验证
+    sift_verify = cv2.SIFT_create()
+    kps_after = sift_verify.detect(current_stego, None)
+    kps_after = filter_keypoints_by_boundary(kps_after, (h, w))
+    kps_after = sorted(kps_after, key=lambda x: -x.response)[:SEARCH_RANGE]
 
-    return stego_bgr, embedded_count
+    verify_ok = 0
+    for kp in kps_after:
+        M = get_patch_transform(kp, PATCH_SIZE)
+        patch = cv2.warpAffine(current_stego, M, (PATCH_SIZE, PATCH_SIZE), flags=cv2.INTER_NEAREST)
+        raw = extract_packet_from_patch(patch)
+        hb = parse_heartbeat_packet(raw)
+        if hb is not None:
+            verify_ok += 1
+            continue
+        try:
+            pkt = lt_min.deserialize_lt_packet(raw, BLOCK_SIZE_FOR_LT)
+            if pkt.verify_crc():
+                verify_ok += 1
+        except:
+            pass
+    print(f"    [验证] 嵌入后立即提取: {verify_ok}/{embedded_count}")
+    # 直接返回灰度图
+    return current_stego, embedded_count
 
 
 def extract_from_image(img_gray):
-    """
-    从单张图片提取所有可能的包
-    返回: (心跳包信息列表, 数据包列表)
-    """
+    """从灰度图中提取水印"""
     h, w = img_gray.shape
-
     sift = cv2.SIFT_create()
     kps_all = sift.detect(img_gray, None)
     kps_boundary = filter_keypoints_by_boundary(kps_all, (h, w))
@@ -367,14 +471,21 @@ def main_embed():
                         for _ in range(data_packets_per_img)]
 
         # 组合包列表：心跳包 + 数据包
-        all_packets = [heartbeat] + data_packets
+        all_packets = []
+        for j, pkt in enumerate(data_packets):
+            if j % 4 == 0:  # 每4个数据包前插入1个心跳包
+                all_packets.append(heartbeat)
+            all_packets.append(pkt)
+
+        # 确保不超过 PACKETS_PER_IMG
+        all_packets = all_packets[:PACKETS_PER_IMG]
 
         # 嵌入
         stego_img, embedded_count = embed_into_image(img_bgr, all_packets)
 
         print(f"  嵌入: {embedded_count} 包 (1 心跳 + {embedded_count - 1} 数据)")
 
-        # 保存
+        # 保存（灰度图直接保存为 PNG）
         output_path = os.path.join(OUTPUT_FOLDER, f"stego_{os.path.basename(img_path)}")
         cv2.imwrite(output_path, stego_img)
         print(f"  保存: {output_path}")
@@ -432,17 +543,40 @@ def main_extract():
         print("没有选择任何图片")
         return
 
-    # === 新增：询问是否开启攻击 ===
+    # === 攻击选择菜单 ===
     print("\n" + "-" * 40)
-    print("是否要在提取前模拟 JPEG 压缩攻击？")
-    print("直接回车 = 不攻击 (无损提取)")
-    print("输入数字 = JPEG 质量 (例如 60)")
-    attack_input = input("> ").strip()
+    print("选择攻击类型（可组合，用逗号分隔）:")
+    print("  0 = 不攻击")
+    print("  1 = JPEG 压缩")
+    print("  2 = 平移")
+    print("  3 = 缩放")
+    print("  4 = 裁剪")
+    print("  5 = 旋转")
+    attack_choice = input("> ").strip()
 
-    jpeg_q = None
-    if attack_input.isdigit():
-        jpeg_q = int(attack_input)
-        print(f"⚠️ 已开启攻击模式: JPEG Quality = {jpeg_q}")
+    attacks = {}
+    if attack_choice and attack_choice != '0':
+        for a in attack_choice.split(','):
+            a = a.strip()
+            if a == '1':
+                q = input("  JPEG 质量 (1-100): ").strip()
+                attacks['jpeg'] = int(q) if q.isdigit() else 60
+            elif a == '2':
+                tx = input("  平移 X 像素: ").strip()
+                ty = input("  平移 Y 像素: ").strip()
+                attacks['translate'] = (int(tx), int(ty))
+            elif a == '3':
+                s = input("  缩放比例 (如 0.9): ").strip()
+                attacks['scale'] = float(s)
+            elif a == '4':
+                r = input("  裁剪保留比例 (如 0.9): ").strip()
+                attacks['crop'] = float(r)
+            elif a == '5':
+                ang = input("  旋转角度 (度): ").strip()
+                attacks['rotate'] = float(ang)
+
+    if attacks:
+        print(f"⚠️ 已开启攻击: {list(attacks.keys())}")
     else:
         print("✅ 无损提取模式")
     print("-" * 40 + "\n")
@@ -456,26 +590,34 @@ def main_extract():
     for img_path in selected_files:
         print(f"\n提取: {os.path.basename(img_path)}")
 
-        # 先读取原图 (彩色)
-        img_raw = cv2.imread(img_path)
-        if img_raw is None:
+        # 读取图片（直接读灰度）
+        img_to_process = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img_to_process is None:
             print("  跳过: 无法读取")
             continue
 
-        # === 核心修改：如果开启了攻击，先虐一遍 ===
-        if jpeg_q is not None:
-            # imencode/imdecode 会把图片压成 jpg 再解压，模拟真实压缩
-            # 返回灰度图给提取器
-            img_to_process = attack_jpeg(img_raw, jpeg_q)
-            print(f"  [攻击] 已应用 JPEG Q={jpeg_q} 压缩")
-        else:
-            # 无损模式，直接转灰度
-            img_to_process = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+        # === 应用攻击 ===
+        if 'jpeg' in attacks:
+            img_to_process = attack_jpeg(img_to_process, attacks['jpeg'])
+            print(f"  [攻击] JPEG Q={attacks['jpeg']}")
+        if 'translate' in attacks:
+            tx, ty = attacks['translate']
+            img_to_process = attack_translate(img_to_process, tx, ty)
+            print(f"  [攻击] 平移 ({tx}, {ty})")
+        if 'scale' in attacks:
+            img_to_process = attack_scale(img_to_process, attacks['scale'])
+            print(f"  [攻击] 缩放 {attacks['scale']}")
+        if 'crop' in attacks:
+            img_to_process = attack_crop(img_to_process, attacks['crop'])
+            print(f"  [攻击] 裁剪 {attacks['crop']}")
+        if 'rotate' in attacks:
+            img_to_process = attack_rotate(img_to_process, attacks['rotate'])
+            print(f"  [攻击] 旋转 {attacks['rotate']}°")
 
         # 送入提取器
         heartbeats, data_packets = extract_from_image(img_to_process)
 
-        print(f"  心跳包: {len(heartbeats)} 个, 数据包: {len(data_packets)} 个")
+        print(f"  心跳包: {len(heartbeats)} 个, 候选数据包: {len(data_packets)} 个")
 
         all_heartbeats.extend(heartbeats)
         all_data_packets.extend(data_packets)
@@ -503,6 +645,7 @@ def main_extract():
 
     print(f"\n解码进度: {decoder.packets_received}/{k}")
     print(f"CRC 失败: {decoder.packets_crc_failed}")
+    print(f"有效数据包: {decoder.packets_received}")
     print(f"重复包: {decoder.packets_duplicate}")
 
     # 尝试解码
